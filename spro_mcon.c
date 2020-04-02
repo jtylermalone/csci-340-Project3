@@ -162,7 +162,6 @@ void *consumer_function(void * arg) {
     consumer_data *data = (consumer_data*)arg;
     QUEUE *q = data->q;
     int thread_id = data->thread_id;
-    printf("thread_id: %d\n", thread_id);
     //struct node *temp;
     char *line;
 
@@ -173,14 +172,13 @@ void *consumer_function(void * arg) {
         int words_in_line = word_count(trimmed_line);
         
         //printf("words in line: %d\n", words_in_line);
-        printf("thread_id: %d | ", thread_id);
-        printf("line: %s", line);
+        printf("Thread ID: %d | Line: %s\n", thread_id, trimmed_line);
+
         assert(pthread_mutex_lock(&count_lock) == 0);
         word_total = word_total + words_in_line;
         
         assert(pthread_mutex_unlock(&count_lock) == 0);
         
-        printf(" | current word count: %d\n", word_total);
         //printf("remaining lines: %d\n", lines_in_file);
         //printf("line count: %d\n", line_count);
         
@@ -232,7 +230,6 @@ int main(int argc, char *argv[]) {
 
     
     int lines_in_file = 2699;//count_lines();
-    printf("lc: %d\n", lines_in_file);
     //make the queue 
     char* buffer[lines_in_file];
     //QUEUE q = {0, 0, lines_in_file, buffer, PTHREAD_MUTEX_INITIALIZER, NULL, NULL};
@@ -261,7 +258,7 @@ int main(int argc, char *argv[]) {
 
     // Loop through until we are done with the file
     while (line_size >= 0) {
-        if (line_buf[0] != '\n') {//skip any line that is empty
+        if (line_size > 1) {//skip any line that is empty
             line_count++;
             trimed = trim_ws(line_buf); // trim any whitespace from the line at the front and back but not spaces inbetween words
             put(&q, trimed);
@@ -281,7 +278,6 @@ int main(int argc, char *argv[]) {
     char* end = "..";
     put(&q, end);// the files can't have any non alpha chars so we can use that to send signals || '+' for us is gonna be the end of the file
       
-    printf(" linecount: %d\n", line_count);
     //data to be passed to threads
 
     //display_q(&q, line_count);
@@ -292,8 +288,6 @@ int main(int argc, char *argv[]) {
 
     // make the threads that will interact with the queue
     // the sole producer thread
-    
-    printf("before making threads... line count: %d\n", line_count);
 
     pthread_t threads[num_threads];
     consumer_data cd[num_threads];
