@@ -22,7 +22,6 @@ typedef struct {
     //int             use;                                     
     //int             q_len;                                   
     //char**           buffer;                                 
-    pthread_mutex_t queue_lock;
     //sem_t           empty;
     //sem_t           full;
     struct node *   head;
@@ -50,6 +49,7 @@ typedef struct {
 int word_total = 0;
 int line_count = 0;
 pthread_mutex_t count_lock;
+pthread_mutex_t get_lock;
 
 void put(QUEUE *q,
          char*    line)
@@ -73,16 +73,13 @@ char* get(QUEUE * q)
 {
     struct node *tmp;
 
-    //assert(sem_wait(&q->full) == 0);
-    //assert(pthread_mutex_lock(&q->queue_lock) == 0);
-    //assert(pthread_mutex_lock(&q->queue_lock) == 0);
+    assert(pthread_mutex_lock(&get_lock) == 0);
 
     tmp = q->head;
     q->head = q->head->next;
-    //printf("\n\nline: %s", tmp->line);
-    //assert(pthread_mutex_unlock(&q->queue_lock) == 0);
-    //assert(pthread_mutex_unlock(queue_lock) == 0);
-    //assert(sem_post(empty) == 0);
+
+    assert(pthread_mutex_unlock(&get_lock) == 0);
+
 
     return tmp->line;
     
@@ -171,17 +168,16 @@ void *consumer_function(void * arg) {
 
     while (line_count > 0) {
         line = get(q);
-        if (line == "..")
-            break;
+        line_count = line_count - 1;
         char *trimmed_line = trim_ws(line);
         int words_in_line = word_count(trimmed_line);
         
         //printf("words in line: %d\n", words_in_line);
-        printf("thread_id: %d\ | ", thread_id);
+        printf("thread_id: %d | ", thread_id);
         printf("line: %s", line);
         assert(pthread_mutex_lock(&count_lock) == 0);
         word_total = word_total + words_in_line;
-        line_count = line_count - 1;
+        
         assert(pthread_mutex_unlock(&count_lock) == 0);
         
         printf(" | current word count: %d\n", word_total);
@@ -254,9 +250,9 @@ int main(int argc, char *argv[]) {
     ssize_t line_size; // holds the size of each line as it is being read in | needs to be singed size_t cuz the last line is a neg num
     char* trimed = NULL;
 
-    pthread_mutex_t lock;
-    assert(pthread_mutex_init(&lock, NULL) == 0);
-    QUEUE q = {&lock, NULL, NULL};
+    assert(pthread_mutex_init(&count_lock, NULL) == 0);
+    assert(pthread_mutex_init(&get_lock, NULL) == 0);
+    QUEUE q = {NULL, NULL};
     
 
     // Get the first line of the file
@@ -299,12 +295,14 @@ int main(int argc, char *argv[]) {
     
     printf("before making threads... line count: %d\n", line_count);
 
-    pthread_t *threads = malloc(sizeof(pthread_t) * num_threads);
+    pthread_t threads[num_threads];
+    consumer_data cd[num_threads];
     
     for (int i = 0; i < num_threads; i++) {
         //printf("i: %d\n", i);
-        consumer_data cd = {&q, i};
-        if (pthread_create(&threads[i], NULL, &consumer_function, &cd) != 0) {
+        cd[i].q = &q;
+        cd[i].thread_id = i;
+        if (pthread_create(&threads[i], NULL, &consumer_function, &cd[i]) != 0) {
             printf("Unable to create thread\n");
             exit(1);
        
@@ -316,7 +314,7 @@ int main(int argc, char *argv[]) {
         pthread_join(threads[i], NULL);
     }
 
-    printf("----------------- word total: %d ---------------\n", word_total);
+    printf("final word total: %d\n", word_total);
 
     return 0;
     
