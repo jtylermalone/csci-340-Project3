@@ -163,6 +163,9 @@ void *consumer_function(void * arg) {
         word_total = word_total + words_in_line;
         assert(pthread_mutex_unlock(&count_lock) == 0);
     }
+    // if we don't return here, the compiler gives
+    // a warning: "control reaches end of non-void function"
+    return 0;
 }
 
 // I'm leaving this function here, but for now
