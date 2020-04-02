@@ -6,25 +6,6 @@
 #include <string.h>
 #include <ctype.h>
 
-// node definition
-struct node {
-    char *line;
-    struct node *next;
-};
-
-// queue definition
-typedef struct {
-    struct node *   head;
-    struct node *   tail;
-} QUEUE;
-
-
-// Thread data consumer
-
-typedef struct {
-    QUEUE* q;
-    int thread_id;   
-} consumer_data;
 
 
 // global variables
@@ -32,6 +13,28 @@ int word_total = 0;
 int line_count = 0;
 pthread_mutex_t count_lock;
 pthread_mutex_t get_lock;
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+int fin = 0;
+pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
+
+struct node {
+    char *line;
+    struct node *next;
+};
+
+
+// queue definition
+typedef struct {
+    struct node *   head;
+    struct node *   tail;
+} QUEUE;
+
+// Thread data producer
+
+typedef struct {
+    QUEUE* q;
+    int thread_id;   
+} consumer_data;
 
 // Queue management functions
 
@@ -53,6 +56,7 @@ void put(QUEUE *q,
         q->tail->next = new_line;
         q->tail = q->tail->next;
     }
+    
 }
 
 char* get(QUEUE * q)
@@ -71,9 +75,10 @@ char* get(QUEUE * q)
     // assign head to next node
     q->head = q->head->next;
 
+    char * line = tmp->line;
+
     assert(pthread_mutex_unlock(&get_lock) == 0);
 
-    char * line = tmp->line;
     // i'm pretty sure that freeing here
     // isn't not effective and smart
     free(tmp);
@@ -81,12 +86,9 @@ char* get(QUEUE * q)
 }
 
 
-char* trim_ws(char *str){ 
+char* trim_ws(char *str){ // this method needs work
 
-    // for whatever reason, it's necessary
-    // to perform this function on a copy
-    // of the passed string
-    char *return_str = strdup(str);
+	char *return_str = strdup(str);
     char *end;
 
     if(*return_str == 0){
@@ -104,7 +106,7 @@ char* trim_ws(char *str){
 
     // removing trailing whitespace
     while(end > str && isspace((unsigned char)*end)) {
-        end--;
+		end--;
     }
 
     // truncating trailing whitespace here
@@ -132,6 +134,15 @@ int word_count(char* line) {
     return words;
 }
 
+//thread function
+
+void thr_exit() {
+            pthread_mutex_lock(&m);
+            fin = 1;
+            pthread_cond_signal(&cond);        
+            pthread_mutex_unlock(&m);
+}
+
 void *consumer_function(void * arg) {
 
     // getting data from arguments
@@ -140,12 +151,20 @@ void *consumer_function(void * arg) {
     int thread_id = data->thread_id;
 
     char *line;
+    char* end = "++..";
+    
 
     // line count gets decremented each
     // time through this while loop
-    while (line_count > 0) {
+    while (line_count > 0 && fin == 0) {
         // getting line from queue
         line = get(q);
+
+        //if the end signal is sent end all the threads
+        if(strcmp(line, end) == 0){
+            thr_exit();
+            return NULL;
+        }
 
         line_count = line_count - 1;
 
@@ -156,7 +175,7 @@ void *consumer_function(void * arg) {
         int words_in_line = word_count(trimmed_line);
         
         // printing required info
-        printf("Thread ID: %d | Line: %s\n", thread_id, trimmed_line);
+        printf("Thread ID: %d | Line: <%s>\n", thread_id, trimmed_line);
 
         // adding to overall word total
         assert(pthread_mutex_lock(&count_lock) == 0);
@@ -165,60 +184,54 @@ void *consumer_function(void * arg) {
     }
     // if we don't return here, the compiler gives
     // a warning: "control reaches end of non-void function"
-    return 0;
+    return NULL;
 }
 
-// I'm leaving this function here, but for now
-// it remains unused
-int count_lines(){
-
-    int count = 0;
-
-    char ch;
-    while((ch=fgetc(stdin))!=EOF) {
-        if(ch=='\n')
-            count++;
-    }
-    return count;
-
+void sleep_main() {
+    //sleep the parent functions and make sure all threads fin
+    pthread_mutex_lock(&m);
+    while (fin == 0)
+        pthread_cond_wait(&cond, &m);
+    pthread_mutex_unlock(&m);
 }
 
 
 int main(int argc, char *argv[]) {
 
     if (argc < 1) {
-        fprintf(stderr, "usage: spro_mcon <#_of_con>\n");
-        exit(1);
+	fprintf(stderr, "usage: spro_mcon <#_of_con>\n");
+	exit(1);
     }
-    // getting number of threads from command line
+    // take all the stuff from the command line and put em in variables 
     int num_threads = atoi(argv[1]);
 
-    //make the queue 
-
     //read in all the lines from stdin
-
     // Open the file for reading
     char *line_buf = NULL; // a pointer to the line being read
     size_t line_buf_sz = 0; //gets the size of the line
     ssize_t line_size; // holds the size of each line as it is being read in | needs to be singed size_t cuz the last line is a neg num
-    char* trimmed = NULL;
+    char* trimed = NULL;
 
-
-
+    //init mutex's as well as the queue
     assert(pthread_mutex_init(&count_lock, NULL) == 0);
     assert(pthread_mutex_init(&get_lock, NULL) == 0);
     QUEUE q = {NULL, NULL};
-    
+
     // Get the first line of the file
     line_size = getline(&line_buf, &line_buf_sz, stdin);
+    //printf("line[%06d]: chars=%06zd, buf size=%06zu, contents: %s\n", line_count, line_size, line_buf_sz, line_buf);
+    
 
     // Loop through until we are done with the file
     while (line_size >= 0) {
-        if (line_size > 1) {//skip any line that is empty
+
+        if(line_size > 1) {//skip any line that is empty
             line_count++;
-            trimmed = trim_ws(line_buf); // trim any whitespace from the line at the front and back but not spaces inbetween words
-            put(&q, trimmed);
+            trimed = trim_ws(line_buf); // trim any whitespace from the line at the front and back but not spaces inbetween words
+            put(&q, trimed);
+            //printf("line[%06d]: chars=%06zd, buf size=%06zu, contents: %s\n", line_count, line_size, line_buf_sz, line_buf);
         }
+
         line_size = getline(&line_buf, &line_buf_sz, stdin);
     }
 
@@ -226,17 +239,18 @@ int main(int argc, char *argv[]) {
     free(line_buf);
     line_buf = NULL;
 
-    char* end = "..";
+    char* end = "++..";
+
+    line_count++;
     put(&q, end);// the files can't have any non alpha chars so we can use that to send signals || '+' for us is gonna be the end of the file
-    
 
     // make the threads that will interact with the queue
-
     // array that will hold all threads
     pthread_t threads[num_threads];
     // array that will hold each thread's parameters
     consumer_data cd[num_threads];
-    
+
+    //create each thread and pass it the args needed
     for (int i = 0; i < num_threads; i++) {
         // passing the same queue to each thread
         cd[i].q = &q;
@@ -248,6 +262,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    sleep_main();
+
     // joining threads
     for (int i = 0; i < num_threads; i++) {
         pthread_join(threads[i], NULL);
@@ -256,4 +272,5 @@ int main(int argc, char *argv[]) {
     printf("final word total: %d\n", word_total);
 
     return 0;
+    
 }
