@@ -11,15 +11,24 @@
 //new 
 // Definition of a queue
 
+struct node {
+    char *line;
+    struct node *next;
+};
+
 
 typedef struct {
-    int             fill;                                    
-    int             use;                                                                       
-    char**           buffer;                                 
+    //int             fill;                                    
+    //int             use;                                     
+    //int             q_len;                                   
+    //char**           buffer;                                 
     pthread_mutex_t queue_lock;
-    sem_t           empty;
-    sem_t           full;
+    //sem_t           empty;
+    //sem_t           full;
+    struct node *   head;
+    struct node *   tail;
 } QUEUE;
+
 
 // Thread data producer
 
@@ -33,75 +42,50 @@ typedef struct {
 
 typedef struct {
     QUEUE* q;
-    
+    int thread_id;   
 } consumer_data;
-
-struct node {
-    char *line;
-    struct node *next;
-};
-
-// rather than using a queue struct, I think maybe all 
-// we need is these next 5 lines... this is if, indeed,
-// we just need to create the queue in the main process
-// without using threads.
-struct node *front = NULL;
-struct node *rear = NULL;
-sem_t empty;
-sem_t full;
-pthread_mutex_t count_lock;
-pthread_mutex_t head_lock;
-int number_of_words = 0;
-int lines_in_file;
 
 // Queue management functions
 
-void put(char* line)
+int word_total = 0;
+int line_count = 0;
+pthread_mutex_t count_lock;
+
+void put(QUEUE *q,
+         char*    line)
 {
+
     struct node *new_line = malloc(sizeof(struct node));
     new_line->line = line;
     new_line->next = NULL;
-    if (rear == NULL) {
-        front = new_line;
-        rear = new_line;
+    if (q->tail == NULL) {
+        q->head = new_line;
+        q->tail = new_line;
     }
     else {
-        rear->next = new_line;
-        rear = rear->next;
+        q->tail->next = new_line;
+        q->tail = q->tail->next;
     }
-    //assert(pthread_mutex_unlock(&queue_lock) == 0);
+
 }
 
-struct node* get()
+char* get(QUEUE * q)
 {
     struct node *tmp;
 
     //assert(sem_wait(&q->full) == 0);
     //assert(pthread_mutex_lock(&q->queue_lock) == 0);
-    assert(pthread_mutex_lock(&head_lock) == 0);
-    tmp = front;
-    front = front->next;
+    //assert(pthread_mutex_lock(&q->queue_lock) == 0);
+
+    tmp = q->head;
+    q->head = q->head->next;
     //printf("\n\nline: %s", tmp->line);
-    assert(pthread_mutex_unlock(&head_lock) == 0);
+    //assert(pthread_mutex_unlock(&q->queue_lock) == 0);
     //assert(pthread_mutex_unlock(queue_lock) == 0);
     //assert(sem_post(empty) == 0);
 
-    return tmp;
+    return tmp->line;
     
-}
-
-int word_count(char* line) {
-
-    int words = 0;
-    int i = 0;
-    for (i = 0; line[i]; i++) {
-        if (line[i] == 32)
-            words++;
-    }
-    if (i > 0)
-        words++;
-
-    return words;
 }
 
 
@@ -135,10 +119,84 @@ char* trim_ws(char *str){ // this method needs work
 }
 
 // Thread functions:
+// Thread functions producer
+
+
+/*
+// Thread functions consumer
+
+void * stage_1_fn(void * args)
+{
+
+    STAGE_1_DATA* data = (STAGE_1_DATA*)args;
+
+    for (int i = 0; i < data->n_items; i++) {
+
+        put(data->q_out, i);
+        printf("Stage1: %d\n", i);
+        
+    }
+
+    put(data->q_out, -1);
+    
+    printf("Stage1: Terminating\n");
+    
+    return NULL;
+        
+}
+*/
+
+int word_count(char* line) {
+
+    int words = 0;
+    int i = 0;
+    for (i = 0; line[i]; i++) {
+        if (line[i] == 32)
+            words++;
+    }
+    if (i > 0)
+        words++;
+
+    return words;
+}
+
+void *consumer_function(void * arg) {
+
+    consumer_data *data = (consumer_data*)arg;
+    QUEUE *q = data->q;
+    int thread_id = data->thread_id;
+    printf("thread_id: %d\n", thread_id);
+    //struct node *temp;
+    char *line;
+
+    while (line_count > 0) {
+        line = get(q);
+        if (line == "..")
+            break;
+        char *trimmed_line = trim_ws(line);
+        int words_in_line = word_count(trimmed_line);
+        
+        //printf("words in line: %d\n", words_in_line);
+        printf("thread_id: %d\ | ", thread_id);
+        printf("line: %s", line);
+        assert(pthread_mutex_lock(&count_lock) == 0);
+        word_total = word_total + words_in_line;
+        line_count = line_count - 1;
+        assert(pthread_mutex_unlock(&count_lock) == 0);
+        
+        printf(" | current word count: %d\n", word_total);
+        //printf("remaining lines: %d\n", lines_in_file);
+        //printf("line count: %d\n", line_count);
+        
+    }
+    //printf("%s\n", get());
+
+}
 
 int count_lines(){
 
     int count = 0;
+/*
     char *line_buf = NULL; // a pointer to the line being read
     size_t line_buf_sz = 0; //gets the size of the line
     
@@ -148,34 +206,24 @@ int count_lines(){
         if (line_size != 0) // Increment count if this character is newline 
             count = count + 1; 
     }
+*/
 
-    fseek(stdin,0,SEEK_END);
+    char ch;
+    while((ch=fgetc(stdin))!=EOF) {
+      if(ch=='\n')
+         count++;
+   }
     return count;
 
 }
 
-void *consumer_function(void * arg) {
-
-    int thread_id = (int*)arg;
-    struct node *temp;
-
-    while (lines_in_file >= 1) {
-        temp = get();
-        char *line = trim_ws(temp->line);
-        int words_in_line = word_count(line);
-        printf("thread_id: %d\n", thread_id);
-        printf("line: %s", line);
-        assert(pthread_mutex_lock(&count_lock) == 0);
-        number_of_words = number_of_words + words_in_line;
-        assert(pthread_mutex_unlock(&count_lock) == 0);
-        
-        lines_in_file = lines_in_file - 1;
-        printf("\ncurrent word count: %d\n", number_of_words);
-        printf("remaining lines: %d\n", lines_in_file);
-    }
-    //printf("%s\n", get());
-    printf("**********************\n");
-}
+/*
+void display_q(QUEUE* q, int len_q){
+    printf("contents of queue\n");
+    for(int i = 0; i < len_q + 1; i++){
+        printf("line %d: <%s>\n", i, q->buffer[i]);
+    }  
+}*/
 
 int main(int argc, char *argv[]) {
 
@@ -185,70 +233,90 @@ int main(int argc, char *argv[]) {
     }
     // take all the stuff from the command line and put em in variables 
     int num_threads = atoi(argv[1]);
-    pthread_t *threads = malloc(sizeof(pthread_t) * num_threads);
+
     
-    assert(pthread_mutex_init(&count_lock, NULL) == 0);
-    assert(pthread_mutex_init(&head_lock, NULL) == 0);
-    char *line_buf = NULL; // a pointer to the line being read
-    size_t line_buf_sz = 0; //gets the size of the line
-    int line_count = 0; 
-    ssize_t line_size; 
-	//QUEUE q = {0, 0, buffer, PTHREAD_MUTEX_INITIALIZER};
-    while(line_size = getline(&line_buf, &line_buf_sz, stdin) >= 0){
-        // trimming trailing/leading whitespace and putting on queue
-        if (line_buf[0] != '\n') {
-            put(trim_ws(line_buf)); 
-            lines_in_file++; // incrementing number of lines
-        }
-    }
-    printf("\nlines in file: %d\n", lines_in_file);
-
-    for (int i = 0; i < num_threads; i++) {
-
-        if (pthread_create(&threads[i], NULL, &consumer_function, (void*)i) != 0) {
-            printf("Unable to create thread\n");
-            exit(1);
-        }
-
-    }
-    
-    assert(sem_init(&empty, 0, lines_in_file) == 0);
-    assert(sem_init(&full, 0, 0) == 0);
-    
-    /*
-    // displaying each line by running through queue
-    struct node *temp;
-    temp = front;
-    printf("\n");
-    int total_words = 0;
-    while (temp != NULL) {
-        printf("line: %s\n", temp->line);
-        printf("# of words in line: %d\n", word_count(temp->line));
-        total_words = total_words + word_count(temp->line);
-        temp = temp->next;
-    }
-    */
-   
-    for (int i = 0; i < num_threads; i++)
-        pthread_join(threads[i], NULL);
-
-    printf("\ntotal words in file: %d\n", number_of_words);
-
+    int lines_in_file = 2699;//count_lines();
+    printf("lc: %d\n", lines_in_file);
     //make the queue 
     char* buffer[lines_in_file];
-    QUEUE q = {0, 0, buffer, PTHREAD_MUTEX_INITIALIZER};
+    //QUEUE q = {0, 0, lines_in_file, buffer, PTHREAD_MUTEX_INITIALIZER, NULL, NULL};
+    //assert(sem_init(&q.empty, 0, lines_in_file) == 0);
+    //assert(sem_init(&q.full, 0, 0) == 0);
+    
     
 
+    //read in all the lines from stdin
+
+    // Open the file for reading
+    char *line_buf = NULL; // a pointer to the line being read
+    size_t line_buf_sz = 0; //gets the size of the line
+    //int line_count = 0; // a simple counter that will keep track of the number of lines that are read in from stdin
+    ssize_t line_size; // holds the size of each line as it is being read in | needs to be singed size_t cuz the last line is a neg num
+    char* trimed = NULL;
+
+    pthread_mutex_t lock;
+    assert(pthread_mutex_init(&lock, NULL) == 0);
+    QUEUE q = {&lock, NULL, NULL};
+    
+
+    // Get the first line of the file
+    line_size = getline(&line_buf, &line_buf_sz, stdin);
+    //printf("line[%06d]: chars=%06zd, buf size=%06zu, contents: %s\n", line_count, line_size, line_buf_sz, line_buf);
+
+    // Loop through until we are done with the file
+    while (line_size >= 0) {
+        if (line_buf[0] != '\n') {//skip any line that is empty
+            line_count++;
+            trimed = trim_ws(line_buf); // trim any whitespace from the line at the front and back but not spaces inbetween words
+            put(&q, trimed);
+
+            //tessting stuff
+            // Show the line details
+            //printf("line[%06d]: chars=%06zd, buf size=%06zu, contents: <%s>\n", line_count, line_size, line_buf_sz, trimed);
+        }
+
+        line_size = getline(&line_buf, &line_buf_sz, stdin);
+    }
+
+    // every time the line is larger than the allocated buffer it increases the buffer sz so its probs very large by the end of the file so we will free the allocated line buffer
+    free(line_buf);
+    line_buf = NULL;
+
+    char* end = "..";
+    put(&q, end);// the files can't have any non alpha chars so we can use that to send signals || '+' for us is gonna be the end of the file
+      
+    printf(" linecount: %d\n", line_count);
     //data to be passed to threads
-    producer_data pd = {&q};
-    consumer_data cd = {&q};
+
+    //display_q(&q, line_count);
+
+    //consumer_data cd = {&q};
+
+    
 
     // make the threads that will interact with the queue
     // the sole producer thread
-    pthread_t p1;
-    //assert(pthread_create(&p1, NULL, producer_fn, (void*)&pd) == 0);
     
-    //assert(pthread_join(p1, NULL) == 0);
+    printf("before making threads... line count: %d\n", line_count);
+
+    pthread_t *threads = malloc(sizeof(pthread_t) * num_threads);
+    
+    for (int i = 0; i < num_threads; i++) {
+        //printf("i: %d\n", i);
+        consumer_data cd = {&q, i};
+        if (pthread_create(&threads[i], NULL, &consumer_function, &cd) != 0) {
+            printf("Unable to create thread\n");
+            exit(1);
+       
+        }
+
+    }
+
+    for (int i = 0; i < num_threads; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    printf("----------------- word total: %d ---------------\n", word_total);
 
     return 0;
     
